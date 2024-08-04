@@ -11,11 +11,11 @@ from googleapiclient.discovery import build
 import datetime
 import pytz
 
-GOOGLE_TIMEZONE_API_KEY = os.getenv("GOOGLE_TIMEZONE_API_KEY")
-
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 load_dotenv()
+GOOGLE_TIMEZONE_API_KEY = os.getenv("GOOGLE_TIMEZONE_API_KEY")
+
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 TITLE, START, END, LOCATION = range(4)
