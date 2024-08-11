@@ -15,10 +15,9 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 load_dotenv()
 GOOGLE_TIMEZONE_API_KEY = os.getenv("GOOGLE_TIMEZONE_API_KEY")
-
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-TITLE, START, END, LOCATION = range(4)
+TITLE, START, END, LOCATION, CODE = range(5)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Hello\nUse /help command to get help")
@@ -73,40 +72,63 @@ async def location_response(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     dt_start = timezone.localize(dt_start)
     dt_end = timezone.localize(dt_end)
 
-    creds = None
 
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json')
+    # Use the run_console method to get the URL and send it to the user
     
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
+    flow = InstalledAppFlow.from_client_secrets_file(
+        'credentials.json', SCOPES
+    )
+    flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
+    auth_url, _ = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
 
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-    
-    servic = build("calendar", "v3", credentials=creds)
+    context.user_data['flow'] = flow
+    context.user_data['dt_start'] = dt_start
+    context.user_data['dt_end'] = dt_end
+    context.user_data['timezone_str'] = timezone_str
 
-    event = {
-        'summary': context.user_data['title'],
-        'start': {
-            'dateTime': dt_start.isoformat(),
-            'timeZone': timezone_str,
-        },
-        'end': {
-            'dateTime': dt_end.isoformat(),
-            'timeZone': timezone_str,
+    await update.message.reply_text(
+        "Please visit the following URL to authorize this application and provide the code here:\n" + auth_url
+    )
+
+    # Pause here and wait for the user to enter the authorization code
+    return CODE
+
+async def auth_code_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    flow = context.user_data['flow']
+    dt_start = context.user_data['dt_start']
+    dt_end = context.user_data['dt_end']
+    timezone_str = context.user_data['timezone_str']
+    code = update.message.text
+
+    try:
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+
+        service = build("calendar", "v3", credentials=creds)
+
+        event = {
+            'summary': context.user_data['title'],
+            'start': {
+                'dateTime': dt_start.isoformat(),
+                'timeZone': timezone_str,
+            },
+            'end': {
+                'dateTime': dt_end.isoformat(),
+                'timeZone': timezone_str,
+            }
         }
-    }
 
-    event = servic.events().insert(calendarId='primary', body=event).execute()
-    print(f"Event created: {event.get('htmlLink')}")
-    await update.message.reply_text(f"Event created: {event.get('htmlLink')}")
+        event = service.events().insert(calendarId='primary', body=event).execute()
+        await update.message.reply_text(f"Event created: {event.get('htmlLink')}")
+    except Exception as e:
+        await update.message.reply_text(f"Failed to create event: {str(e)}")
 
     return ConversationHandler.END
+
 
 def get_timezone(location):
     latitude, longitude = location
@@ -137,6 +159,7 @@ if __name__ == "__main__":
             START: [MessageHandler(filters.TEXT, start_response)],
             END: [MessageHandler(filters.TEXT, end_response)],
             LOCATION: [MessageHandler(filters.LOCATION, location_response)],
+            CODE : [MessageHandler(filters.TEXT, auth_code_response)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
